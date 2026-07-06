@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import math
+import re
 import shutil
 import subprocess
 import sys
@@ -12,8 +13,10 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 GNUPLOT_COMMAND = "gnuplot"
+VERSION = "1.0.0"
+NEGATIVE_DECIMAL_RE = re.compile(r"-\d+\.\d+(?:[eE][+-]?\d+)?")
 
-GEOMETRY_TYPES = {
+BASE_GEOMETRY_TYPES = {
     "B": ("Distance", 2, "Angstrom", (1, 1)),
     "A": ("Angle", 3, "degree", (1, 1, 1)),
     "D": ("Dihedral", 4, "degree", (1, 1, 1, 1)),
@@ -21,6 +24,7 @@ GEOMETRY_TYPES = {
     "PA": ("Plane-Plane Angle", 2, "degree", (3, 3)),
     "PB": ("Plane-Plane Distance", 2, "Angstrom", (3, 3)),
 }
+ENERGY_GEOMETRY_TYPE = ("Energy", 0, "Hartree", ())
 
 
 @dataclass
@@ -47,9 +51,29 @@ class AnalysisResult:
     geometry_name: str
     unit: str
     fragments: list[list[int]]
+    fragment_inputs: list[str]
     frame_indices: list[int]
     values: list[float]
     source_path: Path
+
+
+def parse_energy(comment: str) -> float | None:
+    """Extract electronic energy from a frame comment line, if present."""
+    match = NEGATIVE_DECIMAL_RE.search(comment)
+    if not match:
+        return None
+    return float(match.group(0))
+
+
+def trajectory_has_energy(frames: Sequence[Frame]) -> bool:
+    return bool(frames) and all(parse_energy(frame.comment) is not None for frame in frames)
+
+
+def available_geometry_types(frames: Sequence[Frame]) -> dict[str, tuple]:
+    geometry_types = dict(BASE_GEOMETRY_TYPES)
+    if trajectory_has_energy(frames):
+        geometry_types["E"] = ENERGY_GEOMETRY_TYPE
+    return geometry_types
 
 
 def vec_sub(a: Sequence[float], b: Sequence[float]) -> tuple[float, float, float]:
@@ -359,35 +383,35 @@ def prompt_yes_no(prompt: str) -> bool:
         print("Please answer 'y' or 'n'.")
 
 
-def parse_atom_indices(text: str, max_atoms: int) -> list[int]:
+def parse_index_selection(text: str, max_value: int, *, label: str = "index") -> list[int]:
     indices: list[int] = []
     for token in text.replace(",", " ").split():
         if "-" in token:
             parts = token.split("-", 1)
             if len(parts) != 2 or not parts[0] or not parts[1]:
-                raise ValueError(f"Invalid atom index or range: {token!r}")
+                raise ValueError(f"Invalid {label} or range: {token!r}")
             try:
                 start = int(parts[0])
                 end = int(parts[1])
             except ValueError as exc:
-                raise ValueError(f"Invalid atom index or range: {token!r}") from exc
+                raise ValueError(f"Invalid {label} or range: {token!r}") from exc
             low, high = (start, end) if start <= end else (end, start)
             for idx in range(low, high + 1):
-                if idx < 1 or idx > max_atoms:
-                    raise ValueError(f"Atom index {idx} is out of range (1-{max_atoms}).")
+                if idx < 1 or idx > max_value:
+                    raise ValueError(f"{label.capitalize()} {idx} is out of range (1-{max_value}).")
                 indices.append(idx)
             continue
 
         try:
             idx = int(token)
         except ValueError as exc:
-            raise ValueError(f"Invalid atom index: {token!r}") from exc
-        if idx < 1 or idx > max_atoms:
-            raise ValueError(f"Atom index {idx} is out of range (1-{max_atoms}).")
+            raise ValueError(f"Invalid {label}: {token!r}") from exc
+        if idx < 1 or idx > max_value:
+            raise ValueError(f"{label.capitalize()} {idx} is out of range (1-{max_value}).")
         indices.append(idx)
 
     if not indices:
-        raise ValueError("At least one atom index is required for each fragment.")
+        raise ValueError(f"At least one {label} is required.")
 
     seen: set[int] = set()
     unique: list[int] = []
@@ -398,12 +422,36 @@ def parse_atom_indices(text: str, max_atoms: int) -> list[int]:
     return unique
 
 
+def parse_atom_indices(text: str, max_atoms: int) -> list[int]:
+    return parse_index_selection(text, max_atoms, label="atom index")
+
+
+def parse_frame_indices(text: str, max_frames: int) -> list[int]:
+    return parse_index_selection(text, max_frames, label="frame")
+
+
+def prompt_frame_selection(total_frames: int) -> list[int]:
+    default = "1" if total_frames == 1 else f"1-{total_frames}"
+    print(
+        "\nEnter frame indices to analyze (1-based). "
+        "Separate multiple indices with spaces or commas; "
+        "use a hyphen to specify a continuous range (e.g. 5-20)."
+    )
+    while True:
+        raw = prompt_with_default(f"Frame indices [default: {default}]: ", default)
+        try:
+            return parse_frame_indices(raw, total_frames)
+        except ValueError as exc:
+            print(f"Error: {exc}")
+
+
 def prompt_fragments(
     num_fragments: int,
     max_atoms: int,
     min_atoms: Sequence[int],
-) -> list[list[int]]:
+) -> tuple[list[list[int]], list[str]]:
     fragments: list[list[int]] = []
+    fragment_inputs: list[str] = []
     print(
         "Enter atom indices for each fragment (1-based). "
         "Separate multiple indices with spaces or commas; "
@@ -424,10 +472,11 @@ def prompt_fragments(
                         f"but only {len(indices)} were provided."
                     )
                 fragments.append(indices)
+                fragment_inputs.append(raw.strip())
                 break
             except ValueError as exc:
                 print(f"Error: {exc}")
-    return fragments
+    return fragments, fragment_inputs
 
 
 def fragment_coords(frame: Frame, atom_indices: Sequence[int]) -> list[tuple[float, float, float]]:
@@ -465,25 +514,33 @@ def compute_geometry_value(
         center1, normal1 = fit_plane(fragment_coords(frame, fragments[0]))
         center2, normal2 = fit_plane(fragment_coords(frame, fragments[1]))
         return calc_plane_plane_distance(center1, normal1, center2, normal2)
+    if geometry_key == "E":
+        energy = parse_energy(frame.comment)
+        if energy is None:
+            raise ValueError(f"Frame comment does not contain energy information: {frame.comment!r}")
+        return energy
     raise ValueError(f"Unsupported geometry type: {geometry_key}")
 
 
 def analyze_frames(
-    frames: list[Frame],
+    frame_numbers: Sequence[int],
+    frames: Sequence[Frame],
     geometry_key: str,
     fragments: list[list[int]],
+    fragment_inputs: list[str],
     source_path: Path,
+    geometry_types: dict[str, tuple],
 ) -> AnalysisResult:
-    geometry_name, _, unit, _ = GEOMETRY_TYPES[geometry_key]
+    geometry_name, _, unit, _ = geometry_types[geometry_key]
     natoms_ref = len(frames[0].atoms)
     frame_indices: list[int] = []
     values: list[float] = []
 
-    for frame_id, frame in enumerate(frames, start=1):
+    for frame_id, frame in zip(frame_numbers, frames):
         if len(frame.atoms) != natoms_ref:
             raise ValueError(
                 f"Frame {frame_id} contains {len(frame.atoms)} atoms, "
-                f"but frame 1 contains {natoms_ref} atoms."
+                f"but frame {frame_numbers[0]} contains {natoms_ref} atoms."
             )
         value = compute_geometry_value(geometry_key, frame, fragments)
         frame_indices.append(frame_id)
@@ -494,17 +551,17 @@ def analyze_frames(
         geometry_name=geometry_name,
         unit=unit,
         fragments=fragments,
+        fragment_inputs=fragment_inputs,
         frame_indices=frame_indices,
         values=values,
         source_path=source_path,
     )
 
 
-def format_fragment_summary(fragments: Sequence[Sequence[int]]) -> str:
+def format_fragment_summary(fragment_inputs: Sequence[str]) -> str:
     parts = []
-    for idx, group in enumerate(fragments, start=1):
-        atom_text = ", ".join(str(i) for i in group)
-        parts.append(f"Fragment {idx}: [{atom_text}]")
+    for idx, text in enumerate(fragment_inputs, start=1):
+        parts.append(f"Fragment {idx}: [{text}]")
     return "; ".join(parts)
 
 
@@ -513,11 +570,16 @@ def write_statistics_file(result: AnalysisResult, output_path: Path) -> None:
     maximum = max(result.values)
     mean = sum(result.values) / len(result.values)
 
+    fragment_line = "# Fragment definition: N/A"
+    if result.fragment_inputs:
+        fragment_line = f"# Fragment definition: {format_fragment_summary(result.fragment_inputs)}"
+
     lines = [
         "# Molecular geometry statistics",
+        f"# Auto-generated by xyz_pdb_stats.py (Version {VERSION})",
         f"# Source file: {result.source_path}",
         f"# Quantity: {result.geometry_name}",
-        f"# Fragment definition: {format_fragment_summary(result.fragments)}",
+        fragment_line,
         f"# Unit: {result.unit}",
         "#",
         "# Frame    Value",
@@ -553,7 +615,7 @@ def build_gnuplot_script(result: AnalysisResult, data_path: Path, png_path: Path
     data_name = data_path.name
     png_name = png_path.name
 
-    script = f"""# Auto-generated by xyz_geometry_stats.py
+    script = f"""# Auto-generated by xyz_pdb_stats.py (Version {VERSION})
 reset
 set terminal pngcairo size 1200,750 enhanced font "Arial,12"
 set output '{escape_gnuplot_text(png_name)}'
@@ -593,22 +655,32 @@ def wait_for_exit() -> None:
     input("Press ENTER to exit.")
 
 
-def choose_geometry_type() -> str:
+GEOMETRY_CHOICE_ORDER = ("B", "A", "D", "FP", "PA", "PB", "E")
+
+
+def choose_geometry_type(geometry_types: dict[str, tuple]) -> str:
     print("\nAvailable geometric quantities:")
-    print("  B  - Distance")
-    print("  A  - Angle")
-    print("  D  - Dihedral angle")
-    print("  FP - Fragment-Plane distance")
-    print("  PA - Plane-Plane angle")
-    print("  PB - Plane-Plane distance")
+    labels = {
+        "B": "Distance",
+        "A": "Angle",
+        "D": "Dihedral angle",
+        "FP": "Fragment-Plane distance",
+        "PA": "Plane-Plane angle",
+        "PB": "Plane-Plane distance",
+        "E": "Energy",
+    }
+    for key in GEOMETRY_CHOICE_ORDER:
+        if key in geometry_types:
+            print(f"  {key:<2} - {labels[key]}")
+    valid_choices = "/".join(key for key in GEOMETRY_CHOICE_ORDER if key in geometry_types)
     while True:
-        choice = input("Select quantity to analyze (B/A/D/FP/PA/PB): ").strip().upper()
-        if choice in GEOMETRY_TYPES:
+        choice = input(f"Select quantity to analyze ({valid_choices}): ").strip().upper()
+        if choice in geometry_types:
             return choice
-        print("Invalid choice. Please enter B, A, D, FP, PA, or PB.")
+        print(f"Invalid choice. Please enter one of: {valid_choices}.")
 
 
-def load_structure_file() -> tuple[Path, list[Frame]]:
+def load_structure_file() -> tuple[Path, list[Frame], list[int], list[Frame]]:
     while True:
         raw_path = prompt_nonempty("\nEnter path to the structure file (.xyz or .pdb): ")
         source_path = Path(raw_path).expanduser()
@@ -618,11 +690,17 @@ def load_structure_file() -> tuple[Path, list[Frame]]:
             print(f"Error: File not found: {source_path}")
             continue
         try:
-            frames = load_frames_from_path(source_path)
-            print(f"Loaded {len(frames)} frame(s) from: {source_path}")
+            all_frames = load_frames_from_path(source_path)
+            total_frames = len(all_frames)
+            print(f"Loaded {total_frames} frame(s) from: {source_path}")
             print(f"Format: {source_path.suffix.lower()}")
-            print(f"Atoms per frame: {len(frames[0].atoms)}")
-            return source_path, frames
+            print(f"Atoms per frame: {len(all_frames[0].atoms)}")
+            if trajectory_has_energy(all_frames):
+                print("Energy information detected in frame comments.")
+            frame_numbers = prompt_frame_selection(total_frames)
+            selected_frames = [all_frames[index - 1] for index in frame_numbers]
+            print(f"Selected {len(frame_numbers)} frame(s) for analysis.")
+            return source_path, all_frames, frame_numbers, selected_frames
         except ValueError as exc:
             print(f"Error while reading structure file: {exc}")
 
@@ -653,14 +731,37 @@ def prompt_output_path(source_path: Path, round_index: int) -> Path:
         return out_dir / f"{safe_name}.txt"
 
 
-def run_analysis_round(source_path: Path, frames: list[Frame], round_index: int) -> None:
-    geometry_key = choose_geometry_type()
-    geometry_name, num_fragments, unit, min_atoms = GEOMETRY_TYPES[geometry_key]
+def run_analysis_round(
+    source_path: Path,
+    all_frames: list[Frame],
+    frame_numbers: list[int],
+    selected_frames: list[Frame],
+    round_index: int,
+) -> None:
+    geometry_types = available_geometry_types(all_frames)
+    geometry_key = choose_geometry_type(geometry_types)
+    geometry_name, num_fragments, unit, min_atoms = geometry_types[geometry_key]
     print(f"\nSelected quantity: {geometry_name} ({unit})")
-    fragments = prompt_fragments(num_fragments, len(frames[0].atoms), min_atoms)
 
-    print("\nComputing geometry across all frames...")
-    result = analyze_frames(frames, geometry_key, fragments, source_path)
+    fragments: list[list[int]] = []
+    fragment_inputs: list[str] = []
+    if geometry_key != "E":
+        fragments, fragment_inputs = prompt_fragments(
+            num_fragments,
+            len(selected_frames[0].atoms),
+            min_atoms,
+        )
+
+    print("\nComputing geometry across selected frames...")
+    result = analyze_frames(
+        frame_numbers,
+        selected_frames,
+        geometry_key,
+        fragments,
+        fragment_inputs,
+        source_path,
+        geometry_types,
+    )
 
     output_path = prompt_output_path(source_path, round_index)
     write_statistics_file(result, output_path)
@@ -687,13 +788,20 @@ def run_analysis_round(source_path: Path, frames: list[Frame], round_index: int)
 
 def main() -> int:
     print("=== Molecular Geometry Statistics ===")
+    print(f" Version {VERSION}")
 
     try:
-        source_path, frames = load_structure_file()
+        source_path, all_frames, frame_numbers, selected_frames = load_structure_file()
 
         round_index = 1
         while True:
-            run_analysis_round(source_path, frames, round_index)
+            run_analysis_round(
+                source_path,
+                all_frames,
+                frame_numbers,
+                selected_frames,
+                round_index,
+            )
             round_index += 1
             if not prompt_yes_no(
                 "\nAnalyze another geometric quantity with the same structure file? [y/n]: "
@@ -713,3 +821,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
