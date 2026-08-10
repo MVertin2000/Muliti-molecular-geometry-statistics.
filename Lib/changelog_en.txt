@@ -1,0 +1,70 @@
+Geom-Stats.py Changelog (chronological, one sentence per entry)
+================================================================
+
+1. Created the initial program xyz_geometry_stats.py to load multi-frame XYZ files and interactively compute distance (B), angle (A), and dihedral (D) using fragment centroids for multi-atom groups, with optional gnuplot plotting and English-only prompts.
+
+2. Added hyphenated range input for fragment atom indices (e.g. 38,40-44) and updated the prompt text to document this syntax.
+
+3. Added a post-analysis prompt asking whether to compute another geometric quantity; choosing yes starts a new round, choosing no exits after pressing ENTER.
+
+4. Added default export options so pressing ENTER accepts the current directory and the filename Geom.txt by default.
+
+5. Changed the default export directory from the program working directory to the directory of the loaded XYZ file.
+
+6. Changed gnuplot plotting from thick marked lines (linespoints) to thinner connected lines (lines) for better appearance.
+
+7. In multi-round analysis, default output names now increment as Geom-2.txt, Geom-3.txt, etc., with matching png/plt names to avoid overwriting.
+
+8. Added three plane-related quantities: fragment-plane distance (FP), plane-plane angle (PA), and plane-plane distance (PB), with planes fitted from three or more atoms via least squares.
+
+9. Replaced the hard-coded Windows gnuplot path with PATH-based lookup of the gnuplot command for better portability.
+
+10. Added multi-frame PDB support (CP2K REMARK/END frames and standard MODEL/ENDMDL frames), unified XYZ/PDB loading, and broadened the tool into a general molecular geometry statistics utility.
+
+11. The user added version display and renamed the script to xyz_pdb_stats.py, with export and gnuplot script headers updated to the new filename and version information.
+
+12. Added frame selection after loading trajectories, using the same comma/space/hyphen input style as fragments, with ENTER defaulting to all frames and output preserving original frame numbers.
+
+13. Changed statistics output so fragment definitions are recorded in the user's original input format (e.g. retaining 40-44 ranges instead of expanding every atom index).
+
+14. Following xyz2fakeg.py energy parsing, dynamically added the Energy module (E) when all frame comments contain energy data, outputting energy versus frame (Hartree) without fragment definition.
+
+15. Added support for ORCA (5.x/6.x) and Gaussian output files by content sniffing of ORCA .out and Gaussian .log/.out, extracting per-step coordinates and energies into the unified geometry workflow.
+
+16. Fixed ORCA/Gaussian energy extraction and detection by parsing negative floats after energy markers and improving Gaussian step-to-energy pairing.
+
+17. For Gaussian IRC outputs containing the IRC keyword, automatically invoke GauIRC2xyz.exe in the program directory to convert to XYZ before loading; unified the x-axis to Step in text and gnuplot output, set Arial 18/20 pt fonts, and removed the plot main title while keeping the legend.
+
+18. Fixed IRC conversion failing on paths with non-ASCII characters by running GauIRC2xyz in a temporary ASCII-only directory and copying the resulting XYZ beside the source file, with tighter Gaussian IRC task detection and recognition of IRC outputs that lack Standard orientation blocks.
+
+19. When PB is selected, explain that it is the point-plane distance along plane 1's normal; if the first-frame plane-plane angle exceeds 20 deg, treat the planes as non-parallel and fall back to fragment-plane distance (FP) for the whole round.
+
+20. Extracted gnuplot plotting into Lib/plot_gnuplot.py invoked by the main script via subprocess; added Lib/plot-settings.ini for plot styling and moved both changelogs into Lib.
+
+21. Fixed default .plt files failing PDF/SVG export after extension-only edits by keeping set terminal synchronized with output format (pngcairo/pdfcairo/svg/epscairo).
+
+22. Moved GauIRC2xyz.exe into Lib and renamed the main program to Geom-Stats.py.
+
+23. Fixed multi-frame XYZ loading with empty comments by preserving the blank line after the atom count and only skipping blank separators between frames.
+
+24. Added frozen/source dual-mode app_dir (including source/ layout), switched plotting to import Lib/plot_gnuplot.py, and published an exe + external Lib + source package.
+
+25. Added Lib/vmd_viewer.py and vmd-settings.ini for optional local VMD visualization after loading; added standalone Lib/qc_out_to_xyz.py, with temporary XYZ deleted immediately after VMD import when launched from the main program.
+
+26. VMD visualization can now configure display style (Lines/CPK/Licorice/VDW with detail options) and coloring in vmd-settings.ini (use_gview_element: yes applies GaussView+Element palette via Lib/gview_element_colors.tcl; no keeps VMD defaults).
+
+27. Temporary VMD Tcl scripts are written beside the loaded structure file (not in the system temp directory) and removed automatically after VMD starts successfully.
+
+28. Added a Multiwfn-style built-in first-frame preview (Lib/mol_preview.py + preview-settings.ini) with atom indices, CLI fragment highlighting, mouse rotate/zoom, and Q/Quit to close; post-load visualization is now F/V/N (built-in first frame / VMD multi-frame / none).
+
+29. Merged plot-settings.ini / vmd-settings.ini / preview-settings.ini into a single Lib/settings.ini, divided by "; ========== XXXX Part ==========" sections (Plot / VMD / Preview).
+
+30. Packaged qc_out_to_xyz.py as Lib/QCopt2xyz.exe (VMD temp trajectory conversion now calls this component); fixed three built-in preview issues: frozen exe no longer misused as a Python interpreter, silent highlight loss after closing the preview, and preview frame aligned with the selected analysis frame.
+
+31. Official 1.5.5 release package: Geom-Stats.exe + external Lib (QCopt2xyz.exe, unified settings.ini, built-in preview and VMD helpers) + source.
+
+32. Moved plot_gnuplot.py / vmd_viewer.py / mol_preview.py to the project root; relocated test structure files into a new examples/ folder; Lib/ retains settings, converters, and assets.
+
+================================================================
+File: Lib/changelog_en.txt
+Program: Geom-Stats.py + plot_gnuplot.py + vmd_viewer.py + mol_preview.py + Lib/QCopt2xyz.exe (Version 1.5.5)

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
 
-VERSION = "1.4.0"
+VERSION = "1.5.5"
 PROGRAM_NAME = "Geom-Stats"
 PB_PARALLEL_ANGLE_LIMIT_DEG = 20.0
 
@@ -33,8 +33,15 @@ def app_dir() -> Path:
 
 APP_DIR = app_dir()
 LIB_DIR = APP_DIR / "Lib"
-PLOT_SCRIPT = LIB_DIR / "plot_gnuplot.py"
-PLOT_SETTINGS = LIB_DIR / "plot-settings.ini"
+SETTINGS_INI = LIB_DIR / "settings.ini"
+# Helper scripts live beside the main program (project / release root).
+PLOT_SCRIPT = APP_DIR / "plot_gnuplot.py"
+VMD_SCRIPT = APP_DIR / "vmd_viewer.py"
+PREVIEW_SCRIPT = APP_DIR / "mol_preview.py"
+# Back-compat aliases (all point to the unified Lib/settings.ini).
+PLOT_SETTINGS = SETTINGS_INI
+VMD_SETTINGS = SETTINGS_INI
+PREVIEW_SETTINGS = SETTINGS_INI
 GAUIRC2XYZ_EXE = LIB_DIR / "GauIRC2xyz.exe"
 GAUIRC_DOWNLOAD_URL = "http://sobereva.com/285"
 X_AXIS_LABEL = "Step"
@@ -806,7 +813,8 @@ def prompt_fragments(
     num_fragments: int,
     max_atoms: int,
     min_atoms: Sequence[int],
-) -> tuple[list[list[int]], list[str]]:
+    preview_session: object | None = None,
+) -> tuple[list[list[int]], list[str], object | None]:
     fragments: list[list[int]] = []
     fragment_inputs: list[str] = []
     print(
@@ -814,6 +822,7 @@ def prompt_fragments(
         "Separate multiple indices with spaces or commas; "
         "use a hyphen to specify a continuous range (e.g. 40-44)."
     )
+    warned_preview_closed = False
     for fragment_id in range(1, num_fragments + 1):
         min_required = min_atoms[fragment_id - 1]
         requirement = ""
@@ -830,10 +839,25 @@ def prompt_fragments(
                     )
                 fragments.append(indices)
                 fragment_inputs.append(raw.strip())
+                if preview_session is not None:
+                    try:
+                        alive = bool(preview_session.is_alive())  # type: ignore[attr-defined]
+                        ok = bool(preview_session.set_highlights(fragments))  # type: ignore[attr-defined]
+                    except (BrokenPipeError, OSError, AttributeError):
+                        alive = False
+                        ok = False
+                    if not alive or not ok:
+                        if not warned_preview_closed:
+                            print(
+                                "Built-in preview closed; highlight sync disabled "
+                                "for remaining fragment prompts."
+                            )
+                            warned_preview_closed = True
+                        preview_session = None
                 break
             except ValueError as exc:
                 print(f"Error: {exc}")
-    return fragments, fragment_inputs
+    return fragments, fragment_inputs, preview_session
 
 
 def fragment_coords(frame: Frame, atom_indices: Sequence[int]) -> list[tuple[float, float, float]]:
@@ -976,13 +1000,11 @@ def write_statistics_file(result: AnalysisResult, output_path: Path) -> None:
 
 
 def invoke_lib_plot(data_path: Path) -> None:
-    """Plot via Lib/plot_gnuplot.py (import linkage; safe when frozen)."""
-    if not LIB_DIR.is_dir():
-        raise FileNotFoundError(f"Lib directory not found: {LIB_DIR}")
+    """Plot via plot_gnuplot.py (import linkage; safe when frozen)."""
     if not PLOT_SCRIPT.exists():
         raise FileNotFoundError(f"Plot helper script not found: {PLOT_SCRIPT}")
-    if not PLOT_SETTINGS.exists():
-        raise FileNotFoundError(f"Plot settings file not found: {PLOT_SETTINGS}")
+    if not SETTINGS_INI.exists():
+        raise FileNotFoundError(f"Settings file not found: {SETTINGS_INI}")
 
     module_name = "geom_stats_plot_gnuplot"
     spec = importlib.util.spec_from_file_location(module_name, PLOT_SCRIPT)
@@ -996,6 +1018,85 @@ def invoke_lib_plot(data_path: Path) -> None:
     plt_path, plot_path = plot_module.plot_statistics_file(data_path, PLOT_SETTINGS)
     print(f"Plot saved to: {plot_path}")
     print(f"Gnuplot script saved to: {plt_path}")
+
+
+def invoke_lib_vmd(structure_path: Path, *, start_frame: int | None = None) -> None:
+    """Visualize via vmd_viewer.py (import linkage; same pattern as gnuplot)."""
+    if not VMD_SCRIPT.exists():
+        raise FileNotFoundError(f"VMD helper script not found: {VMD_SCRIPT}")
+    if not SETTINGS_INI.exists():
+        raise FileNotFoundError(f"Settings file not found: {SETTINGS_INI}")
+
+    module_name = "geom_stats_vmd_viewer"
+    spec = importlib.util.spec_from_file_location(module_name, VMD_SCRIPT)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load VMD helper: {VMD_SCRIPT}")
+
+    vmd_module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = vmd_module
+    spec.loader.exec_module(vmd_module)
+
+    tcl_path = vmd_module.visualize_with_vmd(
+        structure_path,
+        VMD_SETTINGS,
+        start_frame=start_frame,
+    )
+    print(f"VMD launched. Tcl script: {tcl_path}")
+
+
+def load_preview_module():
+    if not PREVIEW_SCRIPT.exists():
+        raise FileNotFoundError(f"Preview helper script not found: {PREVIEW_SCRIPT}")
+    if not SETTINGS_INI.exists():
+        raise FileNotFoundError(f"Settings file not found: {SETTINGS_INI}")
+
+    module_name = "geom_stats_mol_preview"
+    spec = importlib.util.spec_from_file_location(module_name, PREVIEW_SCRIPT)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load preview helper: {PREVIEW_SCRIPT}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def invoke_lib_preview(frame: Frame, *, source_label: str = "") -> object | None:
+    """Launch built-in first-frame preview (sidecar Tk/Matplotlib window)."""
+    preview_module = load_preview_module()
+    session = preview_module.start_preview(
+        frame,
+        PREVIEW_SETTINGS,
+        source_label=source_label,
+    )
+    if session is None or not session.is_alive():
+        detail = ""
+        if session is not None:
+            try:
+                detail = session.read_stderr()  # type: ignore[attr-defined]
+            except (AttributeError, OSError):
+                detail = ""
+        raise RuntimeError(
+            "Preview process exited immediately after launch."
+            + (f" Details: {detail}" if detail else "")
+        )
+    print(
+        "Built-in preview launched (selected analysis frame). "
+        "Press Q in the window to quit."
+    )
+    return session
+
+
+def prompt_visualization_choice() -> str:
+    """Ask how to visualize: F=built-in, V=VMD, N=none."""
+    print("\nVisualization options:")
+    print("  F - Built-in preview of selected frame (atom indices + CLI highlight)")
+    print("  V - VMD multi-frame visualization")
+    print("  N - No visualization")
+    while True:
+        choice = input("Select visualization mode (F/V/N): ").strip().upper()
+        if choice in {"F", "V", "N"}:
+            return choice
+        print("Invalid choice. Please enter F, V, or N.")
 
 
 def wait_for_exit() -> None:
@@ -1030,7 +1131,7 @@ def choose_geometry_type(geometry_types: dict[str, tuple]) -> str:
         print(f"Invalid choice. Please enter one of: {valid_choices}.")
 
 
-def load_structure_file() -> tuple[Path, list[Frame], list[int], list[Frame]]:
+def load_structure_file() -> tuple[Path, list[Frame], list[int], list[Frame], object | None]:
     while True:
         raw_path = prompt_nonempty(
             "\nEnter path to the structure file (.xyz, .pdb, ORCA .out, Gaussian .log/.out): "
@@ -1054,7 +1155,27 @@ def load_structure_file() -> tuple[Path, list[Frame], list[int], list[Frame]]:
             frame_numbers = prompt_frame_selection(total_frames)
             selected_frames = [all_frames[index - 1] for index in frame_numbers]
             print(f"Selected {len(frame_numbers)} frame(s) for analysis.")
-            return effective_path, all_frames, frame_numbers, selected_frames
+
+            preview_session: object | None = None
+            viz_choice = prompt_visualization_choice()
+            if viz_choice == "F":
+                try:
+                    # Use the first selected analysis frame (same context as VMD start_frame).
+                    preview_session = invoke_lib_preview(
+                        selected_frames[0],
+                        source_label=(
+                            f"{effective_path.name} (frame {frame_numbers[0]})"
+                        ),
+                    )
+                except (FileNotFoundError, ValueError, RuntimeError, OSError) as exc:
+                    print(f"Built-in preview failed: {exc}")
+            elif viz_choice == "V":
+                try:
+                    invoke_lib_vmd(effective_path, start_frame=frame_numbers[0])
+                except (FileNotFoundError, ValueError, RuntimeError, OSError) as exc:
+                    print(f"VMD visualization failed: {exc}")
+
+            return effective_path, all_frames, frame_numbers, selected_frames, preview_session
         except ValueError as exc:
             print(f"Error while reading structure file: {exc}")
         except (FileNotFoundError, RuntimeError) as exc:
@@ -1093,7 +1214,8 @@ def run_analysis_round(
     frame_numbers: list[int],
     selected_frames: list[Frame],
     round_index: int,
-) -> None:
+    preview_session: object | None = None,
+) -> object | None:
     geometry_types = available_geometry_types(all_frames)
     geometry_key = choose_geometry_type(geometry_types)
     geometry_name, num_fragments, unit, min_atoms = geometry_types[geometry_key]
@@ -1112,10 +1234,11 @@ def run_analysis_round(
     fragments: list[list[int]] = []
     fragment_inputs: list[str] = []
     if geometry_key != "E":
-        fragments, fragment_inputs = prompt_fragments(
+        fragments, fragment_inputs, preview_session = prompt_fragments(
             num_fragments,
             len(selected_frames[0].atoms),
             min_atoms,
+            preview_session=preview_session,
         )
 
     if geometry_key == "PB":
@@ -1153,11 +1276,12 @@ def run_analysis_round(
     write_statistics_file(result, output_path)
     print(f"\nStatistics saved to: {output_path}")
 
-    if prompt_yes_no("\nPlot the results with Lib/plot_gnuplot.py? [y/n]: "):
+    if prompt_yes_no("\nPlot the results with plot_gnuplot.py? [y/n]: "):
         try:
             invoke_lib_plot(output_path)
         except (FileNotFoundError, ValueError, RuntimeError) as exc:
             print(f"Plotting failed: {exc}")
+    return preview_session
 
 
 def main() -> int:
@@ -1165,17 +1289,25 @@ def main() -> int:
     print(" Molecular Geometry Statistics")
     print(f" Version {VERSION}")
 
+    preview_session: object | None = None
     try:
-        source_path, all_frames, frame_numbers, selected_frames = load_structure_file()
+        (
+            source_path,
+            all_frames,
+            frame_numbers,
+            selected_frames,
+            preview_session,
+        ) = load_structure_file()
 
         round_index = 1
         while True:
-            run_analysis_round(
+            preview_session = run_analysis_round(
                 source_path,
                 all_frames,
                 frame_numbers,
                 selected_frames,
                 round_index,
+                preview_session=preview_session,
             )
             round_index += 1
             if not prompt_yes_no(
@@ -1183,13 +1315,28 @@ def main() -> int:
             ):
                 break
 
+        if preview_session is not None:
+            try:
+                preview_session.close()  # type: ignore[attr-defined]
+            except (BrokenPipeError, OSError, AttributeError):
+                pass
         wait_for_exit()
         return 0
     except KeyboardInterrupt:
         print("\nInterrupted by user.")
+        if preview_session is not None:
+            try:
+                preview_session.close()  # type: ignore[attr-defined]
+            except (BrokenPipeError, OSError, AttributeError):
+                pass
         return 1
     except Exception as exc:
         print(f"\nFatal error: {exc}")
+        if preview_session is not None:
+            try:
+                preview_session.close()  # type: ignore[attr-defined]
+            except (BrokenPipeError, OSError, AttributeError):
+                pass
         wait_for_exit()
         return 1
 

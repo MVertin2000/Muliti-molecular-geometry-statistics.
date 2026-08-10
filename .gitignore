@@ -1,0 +1,31 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+dist/
+*.egg-info/
+.eggs/
+release/
+*.zip
+
+# PyInstaller work dirs under build/, keep *.spec
+/build/*
+!/build/*.spec
+
+# local analysis outputs (repo root only)
+/Geom*.txt
+/Geom*.png
+/Geom*.svg
+/Geom*.plt
+/Geom*.pdf
+/MD.txt
+/MD.png
+/MD.svg
+/MD.plt
+
+# editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.tmp

@@ -1,0 +1,70 @@
+Geom-Stats.py 修改历程（按时间顺序，每项一句话概括）
+================================================================
+
+1. 创建初始程序 xyz_geometry_stats.py，支持载入多帧 XYZ 文件并交互计算距离（B）、角度（A）、二面角（D），片段多原子时取几何中心，完成后导出统计文本并可选调用 gnuplot 绘图，全英文交互。
+
+2. 片段原子序号输入支持连字符范围写法（如 38,40-44），并更新提示文本说明该输入方式。
+
+3. 每轮分析结束后增加询问是否继续统计另一组几何量，选“是”则循环重算，选“否”后按 ENTER 退出。
+
+4. 导出路径与文件名支持默认值：目录和文件名直接 ENTER 时分别默认为当前路径与 Geom.txt。
+
+5. 默认导出目录由程序运行路径改为载入的 XYZ 文件所在目录。
+
+6. gnuplot 绘图样式由带点标记的粗折线（linespoints）改为细连线（lines），改善观感。
+
+7. 多轮循环分析时，默认输出文件名依次递增为 Geom-2.txt、Geom-3.txt 等，对应 png/plt 同步命名以防覆盖。
+
+8. 新增三种平面相关几何量：片段-平面距离（FP）、平面-平面夹角（PA）、平面-平面距离（PB），其中平面由三个及以上原子最小二乘拟合得到。
+
+9. gnuplot 调用由硬编码 Windows 路径改为通过 PATH 查找 gnuplot 命令，提升跨环境泛用性。
+
+10. 扩展支持多帧 PDB 格式（含 CP2K 的 REMARK/END 分帧与标准 MODEL/ENDMDL 分帧），统一 XYZ/PDB 载入入口，并将程序定位扩展为分子结构几何统计工具。
+
+11. 用户自行加入版本号提示，并将脚本更名为 xyz_pdb_stats.py，导出与 gnuplot 脚本注释同步使用新文件名与版本信息。
+
+12. 载入轨迹后增加帧选择步骤，输入方式与片段一致（支持逗号、空格与连字符范围），默认 ENTER 分析全部帧，输出保留原始帧编号。
+
+13. 统计文本中片段定义改为按用户原始输入格式记录（如保留 40-44 范围写法，不再展开为逐个原子序号）。
+
+14. 参照 xyz2fakeg.py 的能量解析规则，当各帧注释均含能量信息时动态加入 Energy 模块（E），选择后直接输出能量随帧变化（单位 Hartree），无需定义片段。
+
+15. 扩展支持 ORCA（5.x/6.x）与 Gaussian 输出文件：通过内容识别 ORCA .out 与 Gaussian .log/.out，提取各优化步坐标与能量，统一纳入几何统计流程。
+
+16. 修复 ORCA/Gaussian 输出文件能量提取与提示逻辑，改为在标记后解析负浮点数并改进 Gaussian 逐步能量配对。
+
+17. Gaussian IRC 输出文件检测到 IRC 关键词后自动调用同目录 GauIRC2xyz.exe 转换为 XYZ 再载入；作图与统计文本横坐标统一为 Step，gnuplot 采用 Arial 18/20 字号并移除图顶部大标题。
+
+18. 修复 GauIRC2xyz 无法处理含非 ASCII 字符路径导致 IRC 转换失败的问题：在临时 ASCII 目录中运行转换并将生成的 XYZ 复制回源文件目录，同时收紧 IRC 任务识别规则并修正无 Standard orientation 段的 IRC 输出无法被识别为 Gaussian 格式的问题。
+
+19. 选择 PB 时提示其语义为沿平面1法向的点面距；若首帧两平面夹角大于20度则判定非近似平行，整轮回退为片段-平面距离（FP）计算。
+
+20. 将 gnuplot 出图逻辑拆分为 Lib/plot_gnuplot.py，并由主程序以子进程联动调用；新增 Lib/plot-settings.ini 控制作图细节，changelog 一并迁入 Lib。
+
+21. 修复默认 .plt 因硬编码 pngcairo 导致改扩展名后无法正确导出 PDF/SVG 的问题：按格式同步选择 terminal（pngcairo/pdfcairo/svg/epscairo）。
+
+22. 将 GauIRC2xyz.exe 移入 Lib，并将主程序更名为 Geom-Stats.py。
+
+23. 修复空注释多帧 XYZ 读取：保留原子数后的空行为合法 comment，仅在帧与帧之间跳过空白分隔行。
+
+24. 增加冻结/源码双模式 app_dir（含 source/ 子目录布局），作图改为 import Lib/plot_gnuplot.py，并发布 exe + 外置 Lib + source 包。
+
+25. 新增 Lib/vmd_viewer.py 与 vmd-settings.ini：载入结构后可选调用本地 VMD；新增可独立运行的 Lib/qc_out_to_xyz.py，主程序经 VMD 导入 ORCA/Gaussian 时使用临时 XYZ 并在导入后立即删除。
+
+26. VMD 可视化支持在 vmd-settings.ini 中配置显示风格（Lines/CPK/Licorice/VDW 及细节参数）与配色（use_gview_element：yes 使用 GaussView+Element 调色板 Lib/gview_element_colors.tcl，no 使用 VMD 默认）。
+
+27. VMD 临时 Tcl 改为写入载入文件所在目录（不再使用系统临时目录），并在成功启动 VMD 后自动删除。
+
+28. 新增 Multiwfn 式内置首帧预览（Lib/mol_preview.py + preview-settings.ini）：显示原子编号、随 CLI 片段选择高亮、支持拖动旋转/缩放与 Q/Quit 退出；载入后可视化改为 F/V/N 三选一（内置首帧 / VMD 多帧 / 不可视化）。
+
+29. 将 plot-settings.ini / vmd-settings.ini / preview-settings.ini 整合为统一的 Lib/settings.ini，并以 “; ========== XXXX Part ==========” 分段（Plot / VMD / Preview）。
+
+30. 将 qc_out_to_xyz.py 编译为 Lib/QCopt2xyz.exe（VMD 临时轨迹转换改调该组件）；修复内置预览三条问题：冻结 exe 不再误用主程序作解释器、预览关闭后高亮静默失效、预览帧与所选分析帧对齐。
+
+31. 正式发布 1.5.5：打包 Geom-Stats.exe + 外置 Lib（含 QCopt2xyz.exe、统一 settings.ini、内置预览与 VMD 助手）+ source。
+
+32. 将 plot_gnuplot.py / vmd_viewer.py / mol_preview.py 移至项目根目录；测试用结构文件迁入新建 examples/ 文件夹；Lib/ 保留配置、转换器与资源。
+
+================================================================
+文件：Lib/changelog.txt
+对应程序：Geom-Stats.py + plot_gnuplot.py + vmd_viewer.py + mol_preview.py + Lib/QCopt2xyz.exe（Version 1.5.5）

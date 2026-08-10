@@ -1,37 +1,41 @@
-﻿Geom-Stats 1.4.0
+﻿Geom-Stats 1.5.5
 ================
+
+Interactive multi-frame molecular geometry statistics (B / A / D / FP / PA / PB / E).
+Supports XYZ, PDB, ORCA, and Gaussian trajectories, with optional gnuplot plots,
+VMD visualization, and a built-in Tk/Matplotlib preview.
 
 Layout
 ------
-  Geom-Stats.exe   Main program (no Python required)
-  Lib\             Runtime helpers (must sit beside the exe)
-  source\          Python sources for users who prefer scripts
+  Geom-Stats.py          Main program
+  plot_gnuplot.py        Gnuplot helper
+  vmd_viewer.py          VMD helper
+  mol_preview.py         Built-in preview helper
+  xyz2fakeg.py           Utility
+  Lib\                   Runtime assets (settings.ini, converters, changelogs, icon)
+  examples\              Sample trajectories
+  build_release.bat/.ps1 Windows packaging scripts
+  build\                 PyInstaller specs (not required to run from source)
 
 Requirements
 ------------
-  - Windows x64
-  - gnuplot in PATH (only needed for plotting)
-  - Lib\GauIRC2xyz.exe (bundled) for Gaussian IRC conversion
-    Source: http://sobereva.com/285
+  - Python 3.x (3.13 tested)
+  - gnuplot in PATH (only for plotting)
+  - VMD installed (only for mode V)
+  - matplotlib + tkinter (only for mode F preview)
+  - Lib\GauIRC2xyz.exe / Lib\QCopt2xyz.exe for QC conversion helpers
 
-How to run (exe)
+How to run
+----------
+  python Geom-Stats.py
+
+  Edit Lib\settings.ini for Plot / VMD / Preview options.
+
+Release packages
 ----------------
-  1. Keep Geom-Stats.exe and the Lib\ folder in the same directory.
-  2. Double-click Geom-Stats.exe, or run it from a console.
-  3. Plot style / format: edit Lib\plot-settings.ini
-     (png / pdf / svg / eps). Terminal and extension stay in sync
-     when using Lib\plot_gnuplot.py.
+  Windows binary packages are published on the GitHub Releases page
+  (Geom-Stats-x.y.z.zip). Keep Geom-Stats.exe next to the Lib\ folder.
 
-How to run (source)
--------------------
-  cd <this folder>
-  python source\Geom-Stats.py
-
-  Standalone replot:
-  python Lib\plot_gnuplot.py --data Geom.txt
-  python Lib\plot_gnuplot.py --data Geom.txt --format svg
-
-Notes
------
-  - Sample trajectories are not included in this package.
-  - Antivirus / SmartScreen may warn on unsigned PyInstaller exes.
+Homepage
+--------
+  https://github.com/MVertin2000/Muliti-molecular-geometry-statistics.
