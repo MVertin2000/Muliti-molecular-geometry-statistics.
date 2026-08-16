@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-import importlib.util
 import math
+import multiprocessing
 import re
 import shutil
 import subprocess
@@ -14,35 +14,23 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
 
-VERSION = "1.5.5"
+import mol_preview
+import plot_gnuplot
+import vmd_viewer
+from app_paths import bundled_native, ensure_editable_lib, user_app_dir, user_lib_dir
+
+VERSION = "1.6.0"
 PROGRAM_NAME = "Geom-Stats"
 PB_PARALLEL_ANGLE_LIMIT_DEG = 20.0
 
-
-def app_dir() -> Path:
-    """Resolve the directory that contains Lib/ (exe root or project/release root)."""
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-
-    here = Path(__file__).resolve().parent
-    # Release layout: source/Geom-Stats.py with Lib/ beside the parent folder.
-    if here.name.lower() == "source" and (here.parent / "Lib").is_dir():
-        return here.parent
-    return here
-
-
-APP_DIR = app_dir()
-LIB_DIR = APP_DIR / "Lib"
+APP_DIR = user_app_dir()
+LIB_DIR = user_lib_dir()
 SETTINGS_INI = LIB_DIR / "settings.ini"
-# Helper scripts live beside the main program (project / release root).
-PLOT_SCRIPT = APP_DIR / "plot_gnuplot.py"
-VMD_SCRIPT = APP_DIR / "vmd_viewer.py"
-PREVIEW_SCRIPT = APP_DIR / "mol_preview.py"
 # Back-compat aliases (all point to the unified Lib/settings.ini).
 PLOT_SETTINGS = SETTINGS_INI
 VMD_SETTINGS = SETTINGS_INI
 PREVIEW_SETTINGS = SETTINGS_INI
-GAUIRC2XYZ_EXE = LIB_DIR / "GauIRC2xyz.exe"
+GAUIRC2XYZ_EXE = bundled_native("GauIRC2xyz.exe")
 GAUIRC_DOWNLOAD_URL = "http://sobereva.com/285"
 X_AXIS_LABEL = "Step"
 NEGATIVE_DECIMAL_RE = re.compile(r"-\d+\.\d+(?:[eE][+-]?\d+)?")
@@ -649,14 +637,15 @@ def is_gaussian_irc_output(text: str) -> bool:
 
 
 def convert_gaussian_irc_to_xyz(source_path: Path) -> Path:
-    if not GAUIRC2XYZ_EXE.exists():
+    exe = bundled_native("GauIRC2xyz.exe")
+    if not exe.exists():
         raise FileNotFoundError(
-            f"GauIRC2xyz converter not found: {GAUIRC2XYZ_EXE}\n"
+            f"GauIRC2xyz converter not found: {exe}\n"
             f"Please download it from {GAUIRC_DOWNLOAD_URL}"
         )
 
     print("IRC output file detected.")
-    print(f"Converting with {GAUIRC2XYZ_EXE.name} ...")
+    print(f"Converting with {exe.name} ...")
 
     source_path = source_path.resolve()
     xyz_path = source_path.with_suffix(".xyz")
@@ -668,7 +657,7 @@ def convert_gaussian_irc_to_xyz(source_path: Path) -> Path:
         shutil.copy2(source_path, local_input)
 
         result = subprocess.run(
-            [str(GAUIRC2XYZ_EXE)],
+            [str(exe)],
             input=f"{local_input}\n\n",
             cwd=str(temp_dir_path),
             capture_output=True,
@@ -1000,43 +989,19 @@ def write_statistics_file(result: AnalysisResult, output_path: Path) -> None:
 
 
 def invoke_lib_plot(data_path: Path) -> None:
-    """Plot via plot_gnuplot.py (import linkage; safe when frozen)."""
-    if not PLOT_SCRIPT.exists():
-        raise FileNotFoundError(f"Plot helper script not found: {PLOT_SCRIPT}")
+    """Plot via the bundled plot_gnuplot module."""
     if not SETTINGS_INI.exists():
         raise FileNotFoundError(f"Settings file not found: {SETTINGS_INI}")
-
-    module_name = "geom_stats_plot_gnuplot"
-    spec = importlib.util.spec_from_file_location(module_name, PLOT_SCRIPT)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Unable to load plot helper: {PLOT_SCRIPT}")
-
-    plot_module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = plot_module
-    spec.loader.exec_module(plot_module)
-
-    plt_path, plot_path = plot_module.plot_statistics_file(data_path, PLOT_SETTINGS)
+    plt_path, plot_path = plot_gnuplot.plot_statistics_file(data_path, PLOT_SETTINGS)
     print(f"Plot saved to: {plot_path}")
     print(f"Gnuplot script saved to: {plt_path}")
 
 
 def invoke_lib_vmd(structure_path: Path, *, start_frame: int | None = None) -> None:
-    """Visualize via vmd_viewer.py (import linkage; same pattern as gnuplot)."""
-    if not VMD_SCRIPT.exists():
-        raise FileNotFoundError(f"VMD helper script not found: {VMD_SCRIPT}")
+    """Visualize via the bundled vmd_viewer module."""
     if not SETTINGS_INI.exists():
         raise FileNotFoundError(f"Settings file not found: {SETTINGS_INI}")
-
-    module_name = "geom_stats_vmd_viewer"
-    spec = importlib.util.spec_from_file_location(module_name, VMD_SCRIPT)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Unable to load VMD helper: {VMD_SCRIPT}")
-
-    vmd_module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = vmd_module
-    spec.loader.exec_module(vmd_module)
-
-    tcl_path = vmd_module.visualize_with_vmd(
+    tcl_path = vmd_viewer.visualize_with_vmd(
         structure_path,
         VMD_SETTINGS,
         start_frame=start_frame,
@@ -1044,26 +1009,11 @@ def invoke_lib_vmd(structure_path: Path, *, start_frame: int | None = None) -> N
     print(f"VMD launched. Tcl script: {tcl_path}")
 
 
-def load_preview_module():
-    if not PREVIEW_SCRIPT.exists():
-        raise FileNotFoundError(f"Preview helper script not found: {PREVIEW_SCRIPT}")
-    if not SETTINGS_INI.exists():
-        raise FileNotFoundError(f"Settings file not found: {SETTINGS_INI}")
-
-    module_name = "geom_stats_mol_preview"
-    spec = importlib.util.spec_from_file_location(module_name, PREVIEW_SCRIPT)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Unable to load preview helper: {PREVIEW_SCRIPT}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
 def invoke_lib_preview(frame: Frame, *, source_label: str = "") -> object | None:
     """Launch built-in first-frame preview (sidecar Tk/Matplotlib window)."""
-    preview_module = load_preview_module()
-    session = preview_module.start_preview(
+    if not SETTINGS_INI.exists():
+        raise FileNotFoundError(f"Settings file not found: {SETTINGS_INI}")
+    session = mol_preview.start_preview(
         frame,
         PREVIEW_SETTINGS,
         source_label=source_label,
@@ -1284,6 +1234,22 @@ def run_analysis_round(
     return preview_session
 
 
+def dispatch_cli(argv: list[str] | None = None) -> int:
+    """Route frozen sidecar / optional xyz2fakeg before the interactive CLI."""
+    ensure_editable_lib()
+    args = list(sys.argv[1:] if argv is None else argv)
+    if "--preview-viewer" in args:
+        rest = [item for item in args if item != "--preview-viewer"]
+        if "--viewer" not in rest:
+            rest = ["--viewer", *rest]
+        return mol_preview.main(rest)
+    if args and args[0] == "--xyz2fakeg":
+        import xyz2fakeg
+
+        return xyz2fakeg.main(args[1:])
+    return main()
+
+
 def main() -> int:
     print(f"=== {PROGRAM_NAME} ===")
     print(" Molecular Geometry Statistics")
@@ -1342,5 +1308,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    multiprocessing.freeze_support()
+    sys.exit(dispatch_cli())
 

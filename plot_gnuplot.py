@@ -18,9 +18,11 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-VERSION = "1.5.5"
-APP_DIR = Path(__file__).resolve().parent
-LIB_DIR = APP_DIR / "Lib"
+from app_paths import user_app_dir, user_lib_dir
+
+VERSION = "1.6.0"
+APP_DIR = user_app_dir()
+LIB_DIR = user_lib_dir()
 DEFAULT_SETTINGS = LIB_DIR / "settings.ini"
 
 FORMAT_TERMINALS = {

@@ -15,7 +15,6 @@ import configparser
 import json
 import os
 import queue
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -25,9 +24,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Sequence
 
-VERSION = "1.5.5"
-APP_DIR = Path(__file__).resolve().parent
-LIB_DIR = APP_DIR / "Lib"
+from app_paths import user_app_dir, user_lib_dir
+
+VERSION = "1.6.0"
+APP_DIR = user_app_dir()
+LIB_DIR = user_lib_dir()
 DEFAULT_SETTINGS = LIB_DIR / "settings.ini"
 PREVIEW_SCRIPT = Path(__file__).resolve()
 
@@ -85,6 +86,7 @@ HIGHLIGHT_COLORS = (
 class PreviewSettings:
     show_bonds: bool = True
     show_labels: bool = True
+    show_coordinates: bool = True
     label_fontsize: int = 8
     bond_cutoff_scale: float = 1.15
     atom_size: float = 60.0
@@ -163,22 +165,14 @@ class PreviewSession:
 def resolve_viewer_command(settings_path: Path) -> list[str]:
     """Build argv to launch the Tk preview sidecar.
 
-    Never re-invoke a frozen Geom-Stats.exe as if it were a Python interpreter.
-    Frozen builds must find pythonw/python on PATH (with matplotlib/tkinter).
+    Frozen builds re-enter the same executable with --preview-viewer.
+    Source runs use pythonw/python plus this script.
     """
     settings_args = ["--settings", str(settings_path)]
     frozen = bool(getattr(sys, "frozen", False))
 
     if frozen:
-        for name in ("pythonw.exe", "pythonw", "python.exe", "python"):
-            found = shutil.which(name)
-            if found:
-                return [found, str(PREVIEW_SCRIPT), "--viewer", *settings_args]
-        raise RuntimeError(
-            "Built-in preview requires a system Python with matplotlib/tkinter "
-            "on PATH (pythonw/python not found). Use visualization mode V (VMD) "
-            "or run Geom-Stats from source."
-        )
+        return [str(sys.executable), "--preview-viewer", *settings_args]
 
     python_exe = Path(sys.executable)
     if sys.platform == "win32":
@@ -209,6 +203,7 @@ def load_preview_settings(path: Path) -> PreviewSettings:
     section = parser["preview"] if parser.has_section("preview") else {}
     settings.show_bonds = parse_bool(section.get("show_bonds", "yes"), default=True)
     settings.show_labels = parse_bool(section.get("show_labels", "yes"), default=True)
+    settings.show_coordinates = parse_bool(section.get("show_coordinates", "yes"), default=True)
     settings.label_fontsize = int(section.get("label_fontsize", "8"))
     settings.bond_cutoff_scale = float(section.get("bond_cutoff_scale", "1.15"))
     settings.atom_size = float(section.get("atom_size", "60"))
@@ -290,6 +285,11 @@ def start_preview(
     # Force a GUI-capable backend in the sidecar (avoid Agg/headless defaults).
     env.setdefault("MPLBACKEND", "TkAgg")
 
+    creationflags = 0
+    if getattr(sys, "frozen", False) and sys.platform == "win32":
+        # Hide the extra console that a second Geom-Stats.exe would otherwise open.
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
     try:
         process = subprocess.Popen(
             command,
@@ -300,6 +300,7 @@ def start_preview(
             bufsize=0,
             env=env,
             cwd=str(APP_DIR),
+            creationflags=creationflags,
         )
     except OSError as exc:
         stderr_file.close()
@@ -386,6 +387,20 @@ class MoleculePreviewApp:
         tk.Button(top, text="Quit", command=self.quit_viewer, width=8).pack(
             side=tk.RIGHT, padx=6, pady=4
         )
+        self.show_labels_var = tk.BooleanVar(value=settings.show_labels)
+        self.show_coordinates_var = tk.BooleanVar(value=settings.show_coordinates)
+        tk.Checkbutton(
+            top,
+            text="Coordinates",
+            variable=self.show_coordinates_var,
+            command=self._on_display_toggle,
+        ).pack(side=tk.RIGHT, padx=4, pady=4)
+        tk.Checkbutton(
+            top,
+            text="Atom numbers",
+            variable=self.show_labels_var,
+            command=self._on_display_toggle,
+        ).pack(side=tk.RIGHT, padx=4, pady=4)
 
         self.fig = Figure(figsize=(7.2, 6.2), dpi=100)
         self.ax = self.fig.add_subplot(111, projection="3d")
@@ -403,14 +418,23 @@ class MoleculePreviewApp:
 
         self.root.after(50, self._poll_commands)
 
+    def _on_display_toggle(self) -> None:
+        self.settings.show_labels = bool(self.show_labels_var.get())
+        self.settings.show_coordinates = bool(self.show_coordinates_var.get())
+        self._redraw()
+
     def _style_axes(self) -> None:
-        self.ax.set_xlabel("X (Å)")
-        self.ax.set_ylabel("Y (Å)")
-        self.ax.set_zlabel("Z (Å)")
-        self.ax.xaxis.pane.fill = False
-        self.ax.yaxis.pane.fill = False
-        self.ax.zaxis.pane.fill = False
-        self.ax.grid(False)
+        if self.settings.show_coordinates:
+            self.ax.set_axis_on()
+            self.ax.set_xlabel("X (Å)")
+            self.ax.set_ylabel("Y (Å)")
+            self.ax.set_zlabel("Z (Å)")
+            self.ax.xaxis.pane.fill = False
+            self.ax.yaxis.pane.fill = False
+            self.ax.zaxis.pane.fill = False
+            self.ax.grid(False)
+        else:
+            self.ax.set_axis_off()
 
     def quit_viewer(self) -> None:
         try:

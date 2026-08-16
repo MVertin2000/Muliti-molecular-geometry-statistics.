@@ -20,11 +20,14 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-VERSION = "1.5.5"
-APP_DIR = Path(__file__).resolve().parent
-LIB_DIR = APP_DIR / "Lib"
+from app_paths import enable_lib_module_path, user_app_dir, user_lib_dir
+
+VERSION = "1.6.0"
+APP_DIR = user_app_dir()
+LIB_DIR = user_lib_dir()
 DEFAULT_SETTINGS = LIB_DIR / "settings.ini"
-QCOPT2XYZ_EXE = LIB_DIR / "QCopt2xyz.exe"
+
+enable_lib_module_path()
 
 DISPLAY_STYLES = ("Lines", "CPK", "Licorice", "VDW")
 
@@ -169,28 +172,21 @@ def resolve_palette_path(raw: str, settings_path: Path) -> Path:
 
 
 def run_qcopt2xyz(structure_path: Path, output_xyz: Path) -> None:
-    """Convert ORCA/Gaussian opt output → XYZ via Lib/QCopt2xyz.exe."""
-    if not QCOPT2XYZ_EXE.exists():
+    """Convert ORCA/Gaussian opt output → XYZ via bundled qc_out_to_xyz."""
+    try:
+        import qc_out_to_xyz
+    except ImportError as exc:
         raise FileNotFoundError(
-            f"QC→XYZ converter not found: {QCOPT2XYZ_EXE}\n"
-            "Rebuild it with: python -m PyInstaller --distpath Lib "
-            "build/QCopt2xyz.spec"
-        )
+            "QC→XYZ converter module qc_out_to_xyz was not found. "
+            "Keep Lib/qc_out_to_xyz.py beside settings.ini when running from source."
+        ) from exc
     output_xyz.parent.mkdir(parents=True, exist_ok=True)
-    result = subprocess.run(
-        [str(QCOPT2XYZ_EXE), str(structure_path), "-o", str(output_xyz)],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        cwd=str(LIB_DIR),
-    )
-    if result.returncode != 0 or not output_xyz.exists():
-        detail = (result.stderr or result.stdout or "").strip()
-        raise RuntimeError(
-            f"QCopt2xyz failed (exit {result.returncode})."
-            + (f"\n{detail}" if detail else "")
-        )
+    try:
+        qc_out_to_xyz.convert_qc_output_to_xyz(structure_path, output_xyz)
+    except (FileNotFoundError, ValueError, OSError) as exc:
+        raise RuntimeError(f"QC→XYZ conversion failed: {exc}") from exc
+    if not output_xyz.exists():
+        raise RuntimeError("qc_out_to_xyz did not create the expected XYZ file.")
 
 
 def detect_structure_kind(path: Path) -> str:

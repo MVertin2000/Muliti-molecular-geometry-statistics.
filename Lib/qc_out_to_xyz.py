@@ -6,8 +6,7 @@ Standalone / source usage:
     python Lib/qc_out_to_xyz.py job.out
     python Lib/qc_out_to_xyz.py job.log -o traj.xyz
 
-Runtime component (preferred): Lib/QCopt2xyz.exe — same CLI, used by
-vmd_viewer.py for temporary VMD trajectories.
+Imported by vmd_viewer.py for temporary VMD trajectories (no nested exe).
 """
 
 from __future__ import annotations
@@ -18,7 +17,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-VERSION = "1.5.5"
+VERSION = "1.6.0"
 
 ORCA_COORD_MARKER = "CARTESIAN COORDINATES (ANGSTROEM)"
 ORCA_CYCLE_RE = re.compile(r"GEOMETRY OPTIMIZATION CYCLE\s+(\d+)", re.IGNORECASE)

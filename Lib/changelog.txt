@@ -65,6 +65,12 @@ Geom-Stats.py 修改历程（按时间顺序，每项一句话概括）
 
 32. 将 plot_gnuplot.py / vmd_viewer.py / mol_preview.py 移至项目根目录；测试用结构文件迁入新建 examples/ 文件夹；Lib/ 保留配置、转换器与资源。
 
+33. 版本升至 1.5.6：内置预览窗口与 Lib/settings.ini 增加原子编号、坐标轴两项独立开关，默认为开启，可在窗口勾选或通过 show_labels / show_coordinates 配置。
+
+34. 将根目录 Python 组件改为普通 import 并打进单一 EXE：预览 sidecar 重入本程序 --preview-viewer，QC 转换直接调用 qc_out_to_xyz，不再依赖旁路 helper .py、系统 Python 或 QCopt2xyz.exe。
+
+35. 正式发布 1.6.0：单一 Geom-Stats.exe（含预览栈与 QC 转换）+ 外置可编辑 Lib/settings.ini 与 VMD 色板；不再附带 QCopt2xyz.exe 与旁路 helper .py。
+
 ================================================================
 文件：Lib/changelog.txt
-对应程序：Geom-Stats.py + plot_gnuplot.py + vmd_viewer.py + mol_preview.py + Lib/QCopt2xyz.exe（Version 1.5.5）
+对应程序：Geom-Stats.py + plot_gnuplot.py + vmd_viewer.py + mol_preview.py + qc_out_to_xyz.py（Version 1.6.0）

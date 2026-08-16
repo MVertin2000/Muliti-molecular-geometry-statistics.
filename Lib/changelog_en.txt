@@ -65,6 +65,12 @@ Geom-Stats.py Changelog (chronological, one sentence per entry)
 
 32. Moved plot_gnuplot.py / vmd_viewer.py / mol_preview.py to the project root; relocated test structure files into a new examples/ folder; Lib/ retains settings, converters, and assets.
 
+33. Version 1.5.6: built-in preview window and Lib/settings.ini gained independent toggles for atom numbers and coordinate axes (on by default; checkboxes in the window, or show_labels / show_coordinates in the ini).
+
+34. Root Python helpers are now regular imports inside a single EXE: the preview sidecar re-enters this program with --preview-viewer, and QC conversion calls qc_out_to_xyz directly (no sidecar .py, system Python, or QCopt2xyz.exe).
+
+35. Official 1.6.0 release: one Geom-Stats.exe (preview stack and QC conversion compiled in) plus editable Lib/settings.ini and the VMD palette; QCopt2xyz.exe and sidecar helper .py files are no longer shipped beside the exe.
+
 ================================================================
 File: Lib/changelog_en.txt
-Program: Geom-Stats.py + plot_gnuplot.py + vmd_viewer.py + mol_preview.py + Lib/QCopt2xyz.exe (Version 1.5.5)
+Program: Geom-Stats.py + plot_gnuplot.py + vmd_viewer.py + mol_preview.py + qc_out_to_xyz.py (Version 1.6.0)
